@@ -9,6 +9,7 @@ import {
   BarChart3,
   Settings,
   UtensilsCrossed,
+  CreditCard,
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 
@@ -30,6 +31,11 @@ const navItems = [
     title: "Dashboard",
     url: "/dashboard",
     icon: LayoutDashboard,
+  },
+  {
+    title: "Caja",
+    url: "/dashboard/caja",
+    icon: CreditCard,
   },
   {
     title: "Restaurant",

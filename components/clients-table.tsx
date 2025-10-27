@@ -16,60 +16,12 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal, Search, Pencil, Trash2, Mail, Phone } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-
-// Mock data
-const clients = [
-  {
-    id: "1",
-    name: "Olivia Martin",
-    email: "olivia.martin@email.com",
-    phone: "+1 (555) 123-4567",
-    company: "Tech Corp",
-    totalPurchases: 15234.5,
-    status: "Active",
-  },
-  {
-    id: "2",
-    name: "Jackson Lee",
-    email: "jackson.lee@email.com",
-    phone: "+1 (555) 234-5678",
-    company: "Design Studio",
-    totalPurchases: 8945.25,
-    status: "Active",
-  },
-  {
-    id: "3",
-    name: "Isabella Nguyen",
-    email: "isabella.nguyen@email.com",
-    phone: "+1 (555) 345-6789",
-    company: "Marketing Inc",
-    totalPurchases: 12678.0,
-    status: "Active",
-  },
-  {
-    id: "4",
-    name: "William Kim",
-    email: "will@email.com",
-    phone: "+1 (555) 456-7890",
-    company: "Startup Labs",
-    totalPurchases: 5432.75,
-    status: "Inactive",
-  },
-  {
-    id: "5",
-    name: "Sofia Davis",
-    email: "sofia.davis@email.com",
-    phone: "+1 (555) 567-8901",
-    company: "Consulting Group",
-    totalPurchases: 19876.5,
-    status: "Active",
-  },
-]
+import { clientsData } from "@/lib/clients-data"
 
 export function ClientsTable() {
   const [searchQuery, setSearchQuery] = useState("")
 
-  const filteredClients = clients.filter(
+  const filteredClients = clientsData.filter(
     (client) =>
       client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       client.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -77,32 +29,32 @@ export function ClientsTable() {
   )
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Client Directory</CardTitle>
-        <CardDescription>A complete list of all your clients and their information</CardDescription>
+    <Card className="border-[#B4BEC9]/30">
+      <CardHeader className="bg-[#DEEFE7]/20">
+        <CardTitle className="text-[#002333]">Directorio de Clientes</CardTitle>
+        <CardDescription className="text-[#002333]/70">Lista completa de todos tus clientes y su información</CardDescription>
       </CardHeader>
       <CardContent>
         <div className="mb-4">
           <div className="relative">
-            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Search className="absolute left-2 top-2.5 h-4 w-4 text-[#B4BEC9]" />
             <Input
-              placeholder="Search clients..."
+              placeholder="Buscar clientes..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8"
+              className="pl-8 border-[#B4BEC9]/50 focus:border-[#159A9C] focus:ring-[#159A9C]"
             />
           </div>
         </div>
 
-        <div className="rounded-md border">
+        <div className="rounded-md border border-[#B4BEC9]/30 overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Client</TableHead>
-                <TableHead>Contact</TableHead>
-                <TableHead>Company</TableHead>
-                <TableHead>Total Purchases</TableHead>
+                <TableHead className="min-w-[200px]">Client</TableHead>
+                <TableHead className="min-w-[200px] hidden md:table-cell">Contact</TableHead>
+                <TableHead className="hidden lg:table-cell">Company</TableHead>
+                <TableHead className="hidden sm:table-cell">Total Purchases</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -129,10 +81,11 @@ export function ClientsTable() {
                         </Avatar>
                         <div>
                           <div className="font-medium">{client.name}</div>
+                          <div className="text-xs text-muted-foreground md:hidden">{client.email}</div>
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden md:table-cell">
                       <div className="space-y-1">
                         <div className="flex items-center gap-1 text-sm">
                           <Mail className="h-3 w-3 text-muted-foreground" />
@@ -144,8 +97,8 @@ export function ClientsTable() {
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell>{client.company}</TableCell>
-                    <TableCell>${client.totalPurchases.toFixed(2)}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{client.company}</TableCell>
+                    <TableCell className="hidden sm:table-cell">${client.totalPurchases.toFixed(2)}</TableCell>
                     <TableCell>
                       <Badge variant={client.status === "Active" ? "default" : "secondary"}>{client.status}</Badge>
                     </TableCell>
