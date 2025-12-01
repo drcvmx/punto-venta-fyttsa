@@ -1,17 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -20,20 +13,22 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Separator } from "@/components/ui/separator";
 import {
   DollarSign,
   Trash2,
   Printer,
   Save,
   X,
-  CreditCard,
-  Banknote,
   Search,
   ShoppingCart,
+  ScanBarcode,
+  PackageCheck,
 } from "lucide-react";
 import { toast } from "sonner";
-import { clientsData, type Client } from "@/lib/clients-data";
+import { type Client } from "@/lib/clients-data";
+import { api } from "@/lib/api";
+import { useBusinessContext } from "@/lib/business-context";
+import { PosPaymentModal } from "@/components/pos/pos-payment-modal";
 
 interface SaleItem {
   id: string;
@@ -44,28 +39,27 @@ interface SaleItem {
   discount: number;
 }
 
-
-
-const mockProducts = [
-  {
-    id: "1",
-    code: "102421",
-    name: "Báscula digital con tazón para cocina, 5kg",
-    price: 215.0,
-  },
-  { id: "2", code: "102422", name: "Mouse Inalámbrico", price: 29.99 },
-  { id: "3", code: "102423", name: "Teclado Mecánico", price: 89.99 },
-  { id: "4", code: "102424", name: "Monitor 24 pulgadas", price: 199.99 },
-];
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { TicketView } from "@/components/ticket-view";
+import { OrderValidator } from "@/components/pos/order-validator";
 
 export function CajaInterface() {
+  const { selectedBusiness } = useBusinessContext();
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [items, setItems] = useState<SaleItem[]>([]);
   const [productSearch, setProductSearch] = useState("");
-  const [paymentAmount, setPaymentAmount] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState("efectivo");
+  const [filteredProducts, setFilteredProducts] = useState<any[]>([]);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isTicketOpen, setIsTicketOpen] = useState(false);
+  const [isValidatorOpen, setIsValidatorOpen] = useState(false);
+  const [lastOrder, setLastOrder] = useState<any>(null);
 
-  const addItem = (product: (typeof mockProducts)[0]) => {
+  // --- SCANNER LOGIC START ---
+  const [scannerEnabled, setScannerEnabled] = useState(true);
+  const scannerRef = useRef<HTMLInputElement>(null);
+  const manualInputRef = useRef<HTMLInputElement>(null);
+
+  const addItem = (product: any) => {
     const existingItem = items.find((item) => item.code === product.code);
 
     if (existingItem) {
@@ -76,6 +70,7 @@ export function CajaInterface() {
             : item
         )
       );
+      toast.success(`+1 ${product.name}`);
     } else {
       setItems([
         ...items,
@@ -88,26 +83,140 @@ export function CajaInterface() {
           discount: 0,
         },
       ]);
+      toast.success(`Agregado: ${product.name}`);
     }
     setProductSearch("");
+    setFilteredProducts([]);
   };
+
+  const handleScannerInput = async (text: string) => {
+    const cleanText = text.trim();
+    if (!cleanText) return;
+
+    console.log("Scanned:", cleanText);
+
+    try {
+      if (!selectedBusiness) return;
+
+      // Usar endpoint específico para búsqueda por código de barras
+      const product = await api.get(
+        `/catalogo/buscar-codigo?codigo=${cleanText}`
+      );
+
+      if (product) {
+        // Si es un producto global sin registrar, no tiene precio ni ID de variante
+        if (product.isGlobal) {
+          toast.error("Producto global encontrado pero no registrado. Regístralo primero para asignarle precio.");
+          return;
+        }
+
+        // Encontrar la variante que coincide con el código escaneado
+        const matchingVariant = product.variantes?.find((v: any) =>
+          v.codigoBarras === cleanText || v.codigoQr === cleanText
+        ) || product.variantes?.[0];
+
+        if (!matchingVariant) {
+          toast.error("Producto encontrado pero sin variantes válidas.");
+          return;
+        }
+
+        const itemToAdd = {
+          id: matchingVariant.id,
+          code: matchingVariant.codigoBarras || cleanText,
+          name: `${product.nombre} ${matchingVariant.nombreVariante && matchingVariant.nombreVariante !== 'Presentación Única' ? '- ' + matchingVariant.nombreVariante : ''}`,
+          price: parseFloat(matchingVariant.precio),
+          discount: 0
+        };
+
+        addItem(itemToAdd);
+      } else {
+        toast.error(`Producto no encontrado: ${cleanText}`);
+      }
+    } catch (error) {
+      console.error("Scanner search error:", error);
+      toast.error("Producto no encontrado");
+    }
+
+    if (scannerRef.current) {
+      scannerRef.current.value = "";
+    }
+  };
+
+  const focusScanner = useCallback(() => {
+    if (!scannerEnabled || isValidatorOpen) return;
+
+    requestAnimationFrame(() => {
+      if (
+        scannerRef.current &&
+        document.activeElement !== manualInputRef.current &&
+        document.activeElement?.tagName !== "TEXTAREA" &&
+        (document.activeElement as HTMLElement)?.id !== "payment-amount"
+      ) {
+        scannerRef.current.focus();
+      }
+    });
+  }, [scannerEnabled, isValidatorOpen]);
+
+  useEffect(() => {
+    if (!scannerEnabled) return;
+    focusScanner();
+    const handleInteraction = () => setTimeout(focusScanner, 5);
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('input') && !target.closest('textarea')) {
+        handleInteraction();
+      }
+    };
+    document.addEventListener("click", handleClick, true);
+    document.addEventListener("focusout", handleInteraction, true);
+    window.addEventListener("focus", focusScanner);
+    return () => {
+      document.removeEventListener("click", handleClick, true);
+      document.removeEventListener("focusout", handleInteraction, true);
+      window.removeEventListener("focus", focusScanner);
+    };
+  }, [focusScanner, scannerEnabled]);
+  // --- SCANNER LOGIC END ---
+
+  // --- API SEARCH LOGIC ---
+  useEffect(() => {
+    const searchProducts = async () => {
+      if (productSearch.length > 2) {
+        try {
+          if (!selectedBusiness) return;
+          const results = await api.get(`/catalogo/search?q=${productSearch}`);
+          const flatResults = results.flatMap((p: any) =>
+            p.variantes.map((v: any) => ({
+              id: v.id,
+              code: v.id,
+              name: `${p.nombre} - ${v.nombreVariante}`,
+              price: parseFloat(v.precio),
+              image: p.imagenUrl
+            }))
+          );
+          setFilteredProducts(flatResults);
+        } catch (error) {
+          console.error("Search error:", error);
+        }
+      } else {
+        setFilteredProducts([]);
+      }
+    };
+
+    const timer = setTimeout(searchProducts, 300);
+    return () => clearTimeout(timer);
+  }, [productSearch]);
 
   const updateQuantity = (code: string, quantity: number) => {
     if (quantity <= 0) {
       removeItem(code);
       return;
     }
-    setItems(
-      items.map((item) => (item.code === code ? { ...item, quantity } : item))
-    );
+    setItems(items.map((item) => (item.code === code ? { ...item, quantity } : item)));
   };
 
   const removeItem = (code: string) => {
     setItems(items.filter((item) => item.code !== code));
-  };
-
-  const calculateSubtotal = () => {
-    return items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   };
 
   const calculateTotal = () => {
@@ -118,142 +227,214 @@ export function CajaInterface() {
     }, 0);
   };
 
-  const calculateChange = () => {
-    const payment = parseFloat(paymentAmount) || 0;
-    const total = calculateTotal();
-    return payment - total;
+  const handleCashPayment = async (cashAmount: number) => {
+    if (items.length === 0) {
+      toast.error("No hay productos en la venta");
+      return;
+    }
+
+    try {
+      const total = calculateTotal();
+      const orderData = {
+        storeId: 1,
+        customerName: selectedClient?.name || "Público General",
+        customerEmail: selectedClient?.email || "ventas@mostrador.com",
+        amount: total,
+        items: items.map(item => ({
+          variantId: item.id,
+          quantity: item.quantity,
+          price: item.price
+        })),
+        paymentMethod: 'cash',
+        cashReceived: cashAmount
+      };
+
+      if (!selectedBusiness) {
+        toast.error("Error: No hay negocio seleccionado");
+        return;
+      }
+
+      const response = await api.post('/orders', orderData);
+
+      if (response.id) {
+        const change = cashAmount - total;
+        // toast.success(`Venta completada! Cambio: $${change.toFixed(2)}. Ticket: ${response.collectionCode || response.id}`);
+
+        setLastOrder({
+          ...response,
+          items: items.map(item => ({
+            quantity: item.quantity,
+            productName: item.name,
+            price: item.price,
+            subtotal: item.price * item.quantity
+          })),
+          totalAmount: total,
+          customerName: selectedClient?.name || "Público General",
+          createdAt: new Date().toISOString()
+        });
+        setIsTicketOpen(true);
+        clearSale();
+      } else {
+        toast.error("Error al procesar la venta");
+      }
+    } catch (error: any) {
+      console.error("Cash sale error:", error);
+      toast.error(error.message || "Error al procesar la venta");
+    }
   };
 
-  const processSale = () => {
+  const handleCardPayment = async (token: string, deviceSessionId: string) => {
     if (items.length === 0) {
-      toast.error("No hay artículos en la venta");
+      toast.error("No hay productos en la venta");
       return;
     }
 
-    if (!selectedClient) {
-      toast.error("Selecciona un cliente");
-      return;
+    try {
+      const total = calculateTotal();
+      const chargeData = {
+        tenantId: selectedBusiness?.tenantId,
+        storeId: 1,
+        customerName: selectedClient?.name || "Cliente General",
+        customerEmail: selectedClient?.email || "cliente@general.com",
+        amount: total,
+        items: items.map(item => ({
+          variantId: item.id,
+          quantity: item.quantity,
+          price: item.price
+        })),
+        token_id: token,
+        device_session_id: deviceSessionId,
+        description: `Venta POS - ${selectedClient?.name || "General"}`,
+        customer: {
+          name: selectedClient?.name || "Cliente General",
+          email: selectedClient?.email || "cliente@general.com",
+          phone_number: selectedClient?.phone || '5555555555'
+        }
+      };
+
+      if (!selectedBusiness) {
+        toast.error("Error: No hay negocio seleccionado");
+        return;
+      }
+
+      const response = await api.post('/payments/charge', chargeData);
+
+      if (response.id) {
+        // toast.success(`¡Pago con tarjeta exitoso! Ticket: ${response.collectionCode || response.id}`);
+        setLastOrder({
+          ...response,
+          items: items.map(item => ({
+            quantity: item.quantity,
+            productName: item.name,
+            price: item.price,
+            subtotal: item.price * item.quantity
+          })),
+          totalAmount: total,
+          customerName: selectedClient?.name || "Cliente General",
+          createdAt: new Date().toISOString()
+        });
+        setIsTicketOpen(true);
+        clearSale();
+      } else {
+        toast.error("Error al procesar el pago con tarjeta");
+      }
+    } catch (error: any) {
+      console.error("Card payment error:", error);
+      toast.error(error.message || "Error al procesar el pago con tarjeta");
     }
-
-    const payment = parseFloat(paymentAmount) || 0;
-    const total = calculateTotal();
-
-    if (payment < total) {
-      toast.error("El pago es insuficiente");
-      return;
-    }
-
-    toast.success("¡Venta procesada con éxito!", {
-      description: `Total: $${total.toFixed(
-        2
-      )} - Cambio: $${calculateChange().toFixed(2)}`,
-    });
-
-    // Limpiar venta
-    setItems([]);
-    setPaymentAmount("");
-    setSelectedClient(null);
   };
 
   const clearSale = () => {
     setItems([]);
-    setPaymentAmount("");
+    setSelectedClient(null);
     setProductSearch("");
   };
 
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 min-h-full">
-      {/* Columna Izquierda - Cliente y Productos */}
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 min-h-full relative">
+      <input
+        ref={scannerRef}
+        onChange={(e) => handleScannerInput(e.target.value)}
+        className="absolute w-px h-px opacity-0 -z-10"
+        autoComplete="off"
+      />
+
       <div className="lg:col-span-2 space-y-4">
-        {/* Cliente */}
+        {/* Información de Caja */}
         <Card className="border-[#B4BEC9]/30">
           <CardHeader className="bg-[#DEEFE7]/20 pb-3">
-            <CardTitle className="text-[#002333] text-lg">Cliente</CardTitle>
+            <CardTitle className="text-[#002333] text-lg flex items-center gap-2">
+              <ScanBarcode className="h-5 w-5 text-[#159A9C]" />
+              Punto de Venta
+            </CardTitle>
           </CardHeader>
           <CardContent className="pt-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label className="text-[#002333]/70">Código</Label>
-                <Select
-                  value={selectedClient?.id || ""}
-                  onValueChange={(value) => {
-                    const client = clientsData.find((c) => c.id === value);
-                    setSelectedClient(client || null);
-                  }}
-                >
-                  <SelectTrigger className="border-[#B4BEC9]/50">
-                    <SelectValue placeholder="Seleccionar cliente" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {clientsData.map((client) => (
-                      <SelectItem key={client.id} value={client.id}>
-                        {client.code}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="space-y-1">
+                <Label className="text-[#002333]/70 text-xs uppercase tracking-wider">Caja</Label>
+                <div className="font-medium text-[#002333] text-lg">Principal (01)</div>
               </div>
-              <div className="space-y-2">
-                <Label className="text-[#002333]/70">Nombre</Label>
-                <Input
-                  value={selectedClient?.name || ""}
-                  readOnly
-                  className="border-[#B4BEC9]/50 bg-[#DEEFE7]/10"
-                />
+              <div className="space-y-1">
+                <Label className="text-[#002333]/70 text-xs uppercase tracking-wider">Vendedor</Label>
+                <div className="font-medium text-[#002333] text-lg">Cajero Turno Matutino</div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[#002333]/70 text-xs uppercase tracking-wider">Cliente</Label>
+                <div className="font-medium text-[#002333]/60 text-lg italic">Público General</div>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Búsqueda de Productos */}
+        {/* Búsqueda */}
         <Card className="border-[#B4BEC9]/30">
           <CardContent className="pt-6">
             <div className="relative">
               <Search className="absolute left-3 top-3 h-4 w-4 text-[#B4BEC9]" />
               <Input
+                ref={manualInputRef}
                 placeholder="Buscar producto por código o nombre..."
                 value={productSearch}
                 onChange={(e) => setProductSearch(e.target.value)}
                 className="pl-10 border-[#B4BEC9]/50 focus:border-[#159A9C]"
               />
+              <div className="absolute right-3 top-3 flex items-center gap-2">
+                <span className="text-xs text-muted-foreground hidden sm:inline-block">
+                  {scannerEnabled ? "Scanner Activo" : "Scanner Pausado"}
+                </span>
+                <ScanBarcode className={`h-4 w-4 ${scannerEnabled ? "text-green-500" : "text-gray-400"}`} />
+              </div>
             </div>
-            {productSearch && (
+            {filteredProducts.length > 0 && (
               <div className="mt-2 border border-[#B4BEC9]/30 rounded-lg max-h-40 overflow-y-auto">
-                {mockProducts
-                  .filter(
-                    (p) =>
-                      p.code
-                        .toLowerCase()
-                        .includes(productSearch.toLowerCase()) ||
-                      p.name.toLowerCase().includes(productSearch.toLowerCase())
-                  )
-                  .map((product) => (
-                    <div
-                      key={product.id}
-                      onClick={() => addItem(product)}
-                      className="p-3 hover:bg-[#DEEFE7]/30 cursor-pointer border-b border-[#B4BEC9]/20 last:border-0"
-                    >
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <p className="text-sm font-medium text-[#002333]">
-                            {product.name}
-                          </p>
-                          <p className="text-xs text-[#002333]/50">
-                            Código: {product.code}
-                          </p>
-                        </div>
-                        <p className="text-sm font-semibold text-[#159A9C]">
-                          ${product.price.toFixed(2)}
+                {filteredProducts.map((product) => (
+                  <div
+                    key={product.id}
+                    onClick={() => addItem(product)}
+                    className="p-3 hover:bg-[#DEEFE7]/30 cursor-pointer border-b border-[#B4BEC9]/20 last:border-0"
+                  >
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="text-sm font-medium text-[#002333]">
+                          {product.name}
+                        </p>
+                        <p className="text-xs text-[#002333]/50">
+                          Código: {product.code}
                         </p>
                       </div>
+                      <p className="text-sm font-semibold text-[#159A9C]">
+                        ${product.price.toFixed(2)}
+                      </p>
                     </div>
-                  ))}
+                  </div>
+                ))}
               </div>
             )}
           </CardContent>
         </Card>
 
-        {/* Tabla de Artículos */}
+        {/* Tabla */}
         <Card className="border-[#B4BEC9]/30">
           <CardHeader className="bg-[#DEEFE7]/20 pb-3">
             <CardTitle className="text-[#002333] text-lg flex items-center gap-2">
@@ -268,56 +449,31 @@ export function CajaInterface() {
                   <TableRow className="bg-[#159A9C]">
                     <TableHead className="text-white">Artículo</TableHead>
                     <TableHead className="text-white">Nombre</TableHead>
-                    <TableHead className="text-white text-center">
-                      Unidades
-                    </TableHead>
-                    <TableHead className="text-white text-right">
-                      Precio
-                    </TableHead>
-                    <TableHead className="text-white text-right">
-                      Descto
-                    </TableHead>
-                    <TableHead className="text-white text-right">
-                      Total
-                    </TableHead>
-                    <TableHead className="text-white text-center">
-                      Acción
-                    </TableHead>
+                    <TableHead className="text-white text-center">Unidades</TableHead>
+                    <TableHead className="text-white text-right">Precio</TableHead>
+                    <TableHead className="text-white text-right">Descto</TableHead>
+                    <TableHead className="text-white text-right">Total</TableHead>
+                    <TableHead className="text-white text-center">Acción</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {items.length === 0 ? (
                     <TableRow>
-                      <TableCell
-                        colSpan={7}
-                        className="text-center text-[#002333]/50 py-8"
-                      >
+                      <TableCell colSpan={7} className="text-center text-[#002333]/50 py-8">
                         No hay artículos agregados
                       </TableCell>
                     </TableRow>
                   ) : (
                     items.map((item) => (
-                      <TableRow
-                        key={item.code}
-                        className="hover:bg-[#DEEFE7]/20"
-                      >
-                        <TableCell className="font-medium text-[#002333]">
-                          {item.code}
-                        </TableCell>
-                        <TableCell className="text-[#002333]">
-                          {item.name}
-                        </TableCell>
+                      <TableRow key={item.code} className="hover:bg-[#DEEFE7]/20">
+                        <TableCell className="font-medium text-[#002333]">{item.code}</TableCell>
+                        <TableCell className="text-[#002333]">{item.name}</TableCell>
                         <TableCell className="text-center">
                           <Input
                             type="number"
                             min="1"
                             value={item.quantity}
-                            onChange={(e) =>
-                              updateQuantity(
-                                item.code,
-                                parseInt(e.target.value) || 1
-                              )
-                            }
+                            onChange={(e) => updateQuantity(item.code, parseInt(e.target.value) || 1)}
                             className="w-16 text-center border-[#B4BEC9]/50"
                           />
                         </TableCell>
@@ -328,13 +484,7 @@ export function CajaInterface() {
                           {item.discount.toFixed(2)}%
                         </TableCell>
                         <TableCell className="text-right text-[#159A9C] font-bold">
-                          $
-                          {(
-                            (item.price *
-                              item.quantity *
-                              (100 - item.discount)) /
-                            100
-                          ).toFixed(2)}
+                          ${((item.price * item.quantity * (100 - item.discount)) / 100).toFixed(2)}
                         </TableCell>
                         <TableCell className="text-center">
                           <Button
@@ -352,21 +502,15 @@ export function CajaInterface() {
                 </TableBody>
               </Table>
             </div>
-
-            {/* Resumen */}
             {items.length > 0 && (
               <div className="mt-4 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-[#002333]/70">Partidas:</span>
-                  <span className="font-medium text-[#002333]">
-                    {items.length}
-                  </span>
+                  <span className="font-medium text-[#002333]">{items.length}</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-[#002333]/70">TOTAL:</span>
-                  <span className="font-bold text-[#159A9C] text-lg">
-                    ${calculateTotal().toFixed(2)}
-                  </span>
+                  <span className="font-bold text-[#159A9C] text-lg">${calculateTotal().toFixed(2)}</span>
                 </div>
               </div>
             )}
@@ -374,90 +518,18 @@ export function CajaInterface() {
         </Card>
       </div>
 
-      {/* Columna Derecha - Total y Pago */}
       <div className="space-y-4">
-        {/* Total */}
         <Card className="border-[#159A9C] border-2 bg-[#159A9C]">
           <CardContent className="pt-6">
             <div className="text-center">
               <p className="text-white/90 text-sm mb-2">Total</p>
-              <p className="text-white text-5xl font-bold">
-                ${calculateTotal().toFixed(2)}
-              </p>
+              <p className="text-white text-5xl font-bold">${calculateTotal().toFixed(2)}</p>
             </div>
           </CardContent>
         </Card>
 
-        {/* Cambio */}
-        <Card className="border-[#B4BEC9]/30">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-center">
-              <span className="text-[#159A9C] text-lg font-semibold">
-                Cambio
-              </span>
-              <span className="text-[#159A9C] text-2xl font-bold">
-                $
-                {calculateChange() >= 0 ? calculateChange().toFixed(2) : "0.00"}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
 
-        {/* Forma de Pago */}
-        <Card className="border-[#B4BEC9]/30">
-          <CardHeader className="bg-[#DEEFE7]/20 pb-3">
-            <CardTitle className="text-[#002333] text-lg">
-              Forma de Cobro
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4 space-y-4">
-            <div className="space-y-2">
-              <Label className="text-[#002333]/70">Método de Pago</Label>
-              <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                <SelectTrigger className="border-[#B4BEC9]/50">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="efectivo">
-                    <div className="flex items-center gap-2">
-                      <Banknote className="h-4 w-4" />
-                      Efectivo
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="tarjeta">
-                    <div className="flex items-center gap-2">
-                      <CreditCard className="h-4 w-4" />
-                      Tarjeta
-                    </div>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
 
-            <div className="space-y-2">
-              <Label className="text-[#002333]/70">Importe</Label>
-              <Input
-                type="number"
-                step="0.01"
-                value={paymentAmount}
-                onChange={(e) => setPaymentAmount(e.target.value)}
-                placeholder="0.00"
-                className="text-right text-lg font-semibold border-[#B4BEC9]/50 focus:border-[#159A9C]"
-              />
-            </div>
-
-            <div className="bg-[#DEEFE7] border border-[#159A9C]/30 p-3 rounded-lg">
-              <div className="flex justify-between">
-                <span className="text-[#002333] font-medium">Efectivo</span>
-                <span className="font-bold text-[#159A9C]">
-                  ${paymentAmount || "0.00"}
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Botones de Acción */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <Button
             variant="outline"
@@ -466,6 +538,13 @@ export function CajaInterface() {
           >
             <X className="h-4 w-4 mr-2" />
             Cancelar
+          </Button>
+          <Button
+            onClick={() => setIsValidatorOpen(true)}
+            className="bg-[#002333] hover:bg-[#002333]/90 text-white"
+          >
+            <PackageCheck className="h-4 w-4 mr-2" />
+            Validar Entrega
           </Button>
           <Button
             onClick={() => toast.info("Función en desarrollo")}
@@ -482,7 +561,8 @@ export function CajaInterface() {
             Imprimir
           </Button>
           <Button
-            onClick={processSale}
+            onClick={() => setIsPaymentModalOpen(true)}
+            disabled={items.length === 0}
             className="bg-[#159A9C] hover:bg-[#159A9C]/90 text-white"
           >
             <DollarSign className="h-4 w-4 mr-2" />
@@ -490,6 +570,45 @@ export function CajaInterface() {
           </Button>
         </div>
       </div>
+
+      {/* Payment Modal */}
+      <PosPaymentModal
+        isOpen={isPaymentModalOpen}
+        onClose={() => setIsPaymentModalOpen(false)}
+        total={calculateTotal()}
+        items={items.map(item => ({
+          id: item.id,
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price
+        }))}
+        customer={selectedClient}
+        onCashPayment={handleCashPayment}
+        onCardPayment={handleCardPayment}
+      />
+      {/* Ticket Modal */}
+      <Dialog open={isTicketOpen} onOpenChange={setIsTicketOpen}>
+        <DialogContent className="max-w-md">
+          {lastOrder && (
+            <TicketView
+              orderId={lastOrder.id}
+              collectionCode={lastOrder.collectionCode}
+              date={lastOrder.createdAt}
+              customerName={lastOrder.customerName}
+              items={lastOrder.items}
+              total={Number(lastOrder.totalAmount)}
+              storeName={selectedBusiness?.name || "Mi Tiendita"}
+              storeAddress="Sucursal Principal"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Order Validator Modal */}
+      <OrderValidator
+        isOpen={isValidatorOpen}
+        onClose={() => setIsValidatorOpen(false)}
+      />
     </div>
   );
 }

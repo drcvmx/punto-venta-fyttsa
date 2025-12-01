@@ -1,28 +1,27 @@
-import type { Metadata } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
-import { Analytics } from '@vercel/analytics/next'
-import './globals.css'
-
-const _geist = Geist({ subsets: ["latin"] });
-const _geistMono = Geist_Mono({ subsets: ["latin"] });
+import type { Metadata } from "next";
+import "./globals.css";
+import { BusinessProvider } from '@/lib/business-context';
+import { AuthProvider } from '@/contexts/AuthContext';
 
 export const metadata: Metadata = {
-  title: 'puntodeventa',
-  description: 'Created with v0',
-  generator: 'puntodeventa',
-}
+  title: "Punto de Venta DRCV",
+  description: "Sistema Multi-Tenant para Punto de Venta",
+};
 
 export default function RootLayout({
   children,
 }: Readonly<{
-  children: React.ReactNode
+  children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`font-sans antialiased`}>
-        {children}
-        <Analytics />
+    <html lang="es">
+      <body>
+        <BusinessProvider>
+          <AuthProvider>
+            {children}
+          </AuthProvider>
+        </BusinessProvider>
       </body>
     </html>
-  )
+  );
 }

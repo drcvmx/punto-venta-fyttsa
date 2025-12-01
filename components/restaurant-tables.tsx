@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -15,13 +15,16 @@ import {
 } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
+import { useBusinessContext } from "@/lib/business-context"
+import { api } from "@/lib/api"
+import { toast } from "sonner"
 
 type TableStatus = "available" | "occupied" | "reserved"
 
 interface MenuItem {
   id: string
   name: string
-  category: "Entradas" | "Platos Principales" | "Bebidas" | "Postres"
+  category: string
   price: number
   image?: string
 }
@@ -32,7 +35,7 @@ interface OrderItem extends MenuItem {
 
 interface Table {
   id: string
-  number: number
+  tableNumber: number
   seats: number
   status: TableStatus
   currentOrder?: {
@@ -41,53 +44,61 @@ interface Table {
   }
 }
 
-const menuItems: MenuItem[] = [
-  { id: "1", name: "Ensalada César", category: "Entradas", price: 8.99 },
-  { id: "2", name: "Sopa del Día", category: "Entradas", price: 6.99 },
-  { id: "3", name: "Alitas Picantes", category: "Entradas", price: 12.99 },
-  { id: "4", name: "Hamburguesa Clásica", category: "Platos Principales", price: 15.99 },
-  { id: "5", name: "Pizza Margarita", category: "Platos Principales", price: 18.99 },
-  { id: "6", name: "Pasta Carbonara", category: "Platos Principales", price: 16.99 },
-  { id: "7", name: "Filete de Res", category: "Platos Principales", price: 24.99 },
-  { id: "8", name: "Coca Cola", category: "Bebidas", price: 2.99 },
-  { id: "9", name: "Jugo Natural", category: "Bebidas", price: 3.99 },
-  { id: "10", name: "Café", category: "Bebidas", price: 2.50 },
-  { id: "11", name: "Tiramisú", category: "Postres", price: 7.99 },
-  { id: "12", name: "Helado", category: "Postres", price: 5.99 },
-]
-
-const initialTables: Table[] = [
-  {
-    id: "1",
-    number: 1,
-    seats: 3,
-    status: "available",
-  },
-  {
-    id: "2",
-    number: 2,
-    seats: 3,
-    status: "occupied",
-    currentOrder: {
-      items: [
-        { ...menuItems[3], quantity: 2 },
-        { ...menuItems[7], quantity: 3 },
-      ],
-      startTime: "14:30",
-    },
-  },
-  {
-    id: "3",
-    number: 3,
-    seats: 5,
-    status: "available",
-  },
-]
-
 export function RestaurantTables() {
-  const [tables, setTables] = useState<Table[]>(initialTables)
+  const { selectedBusiness } = useBusinessContext()
+  const [tables, setTables] = useState<Table[]>([])
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([])
   const [selectedTable, setSelectedTable] = useState<Table | null>(null)
   const [isOrderDialogOpen, setIsOrderDialogOpen] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  // Cargar mesas y productos del API
+  useEffect(() => {
+    const loadData = async () => {
+      if (!selectedBusiness) return
+
+      try {
+        setLoading(true)
+
+        // Cargar mesas
+        const tablesData = await api.get('/restaurant/tables', selectedBusiness.tenantId)
+        setTables(tablesData.map((t: any) => ({
+          id: t.id,
+          tableNumber: t.tableNumber,
+          seats: t.seats,
+          status: t.status,
+          currentOrder: undefined
+        })))
+
+        // Cargar productos del catálogo
+        const productsData = await api.get('/catalogo', selectedBusiness.tenantId)
+        const items: MenuItem[] = productsData.flatMap((p: any) =>
+          p.variantes?.map((v: any) => ({
+            id: v.id.toString(),
+            name: `${p.nombre} - ${v.nombreVariante}`,
+            category: p.categoria || "Sin Categoría",  // Usar categoría real del producto
+            price: parseFloat(v.precio),
+          })) || []
+        )
+        setMenuItems(items)
+      } catch (error) {
+        console.error("Error loading data:", error)
+        toast.error("Error al cargar datos del restaurante")
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadData()
+  }, [selectedBusiness])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-[#002333]/60">Cargando mesas y productos...</p>
+      </div>
+    )
+  }
 
   const getStatusColor = (status: TableStatus) => {
     switch (status) {
@@ -111,18 +122,28 @@ export function RestaurantTables() {
     }
   }
 
-  const changeTableStatus = (tableId: string, newStatus: TableStatus) => {
-    setTables((prev) =>
-      prev.map((table) =>
-        table.id === tableId
-          ? {
+  const changeTableStatus = async (tableId: string, newStatus: TableStatus) => {
+    if (!selectedBusiness) return
+
+    try {
+      await api.patch(`/restaurant/tables/${tableId}/status`, { status: newStatus }, selectedBusiness.tenantId)
+
+      setTables((prev) =>
+        prev.map((table) =>
+          table.id === tableId
+            ? {
               ...table,
               status: newStatus,
               currentOrder: newStatus === "available" ? undefined : table.currentOrder,
             }
-          : table,
-      ),
-    )
+            : table,
+        ),
+      )
+      toast.success("Estado actualizado")
+    } catch (error) {
+      console.error("Error updating status:", error)
+      toast.error("Error al actualizar estado")
+    }
   }
 
   const addItemToOrder = (tableId: string, menuItem: MenuItem) => {
@@ -264,20 +285,19 @@ export function RestaurantTables() {
           <Dialog key={table.id}>
             <DialogTrigger asChild>
               <Card
-                className={`border-2 cursor-pointer transition-all duration-200 hover:scale-[1.02] ${
-                  table.status === "available"
-                    ? "border-[#159A9C]/30 hover:border-[#159A9C]"
-                    : table.status === "occupied"
-                      ? "border-[#159A9C] bg-[#DEEFE7]/20"
-                      : "border-[#B4BEC9]/50"
-                }`}
+                className={`border-2 cursor-pointer transition-all duration-200 hover:scale-[1.02] ${table.status === "available"
+                  ? "border-[#159A9C]/30 hover:border-[#159A9C]"
+                  : table.status === "occupied"
+                    ? "border-[#159A9C] bg-[#DEEFE7]/20"
+                    : "border-[#B4BEC9]/50"
+                  }`}
                 onClick={() => setSelectedTable(table)}
               >
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-[#002333] flex items-center gap-2">
                       <Users className="h-5 w-5 text-[#159A9C]" />
-                      Mesa {table.number}
+                      Mesa {table.tableNumber}
                     </CardTitle>
                     <Badge className={getStatusColor(table.status)}>{getStatusText(table.status)}</Badge>
                   </div>
@@ -289,11 +309,10 @@ export function RestaurantTables() {
                     {Array.from({ length: table.seats }).map((_, i) => (
                       <div
                         key={i}
-                        className={`w-12 h-12 rounded-full border-2 flex items-center justify-center transition-colors ${
-                          table.status === "occupied"
-                            ? "border-[#159A9C] bg-[#159A9C]/20"
-                            : "border-[#B4BEC9]/50 bg-white"
-                        }`}
+                        className={`w-12 h-12 rounded-full border-2 flex items-center justify-center transition-colors ${table.status === "occupied"
+                          ? "border-[#159A9C] bg-[#159A9C]/20"
+                          : "border-[#B4BEC9]/50 bg-white"
+                          }`}
                       >
                         <Users
                           className={`h-5 w-5 ${table.status === "occupied" ? "text-[#159A9C]" : "text-[#B4BEC9]"}`}
@@ -330,13 +349,13 @@ export function RestaurantTables() {
               </Card>
             </DialogTrigger>
 
-            <DialogContent className="bg-white border-[#B4BEC9]/30 max-w-4xl max-h-[90vh]">
+            <DialogContent className="bg-white border-[#B4BEC9]/30 w-full max-w-[95vw] md:max-w-5xl max-h-[95vh] overflow-hidden">
               <DialogHeader>
                 <div className="flex items-center justify-between">
                   <div>
                     <DialogTitle className="text-[#002333] flex items-center gap-2">
                       <UtensilsCrossed className="h-5 w-5 text-[#159A9C]" />
-                      Mesa {table.number}
+                      Mesa {table.tableNumber}
                     </DialogTitle>
                     <DialogDescription className="text-[#002333]/70">
                       {table.currentOrder && table.currentOrder.items.length > 0
@@ -356,9 +375,8 @@ export function RestaurantTables() {
                     variant="outline"
                     size="sm"
                     onClick={() => changeTableStatus(table.id, "available")}
-                    className={`border-[#159A9C]/30 hover:bg-[#DEEFE7]/50 ${
-                      table.status === "available" ? "bg-[#DEEFE7]/50 border-[#159A9C]" : ""
-                    }`}
+                    className={`border-[#159A9C]/30 hover:bg-[#DEEFE7]/50 ${table.status === "available" ? "bg-[#DEEFE7]/50 border-[#159A9C]" : ""
+                      }`}
                   >
                     <CheckCircle2 className="h-3 w-3 mr-1" />
                     Disponible
@@ -367,9 +385,8 @@ export function RestaurantTables() {
                     variant="outline"
                     size="sm"
                     onClick={() => changeTableStatus(table.id, "occupied")}
-                    className={`border-[#159A9C]/30 hover:bg-[#159A9C]/10 ${
-                      table.status === "occupied" ? "bg-[#159A9C]/10 border-[#159A9C]" : ""
-                    }`}
+                    className={`border-[#159A9C]/30 hover:bg-[#159A9C]/10 ${table.status === "occupied" ? "bg-[#159A9C]/10 border-[#159A9C]" : ""
+                      }`}
                   >
                     <Users className="h-3 w-3 mr-1" />
                     Ocupar
@@ -378,9 +395,8 @@ export function RestaurantTables() {
                     variant="outline"
                     size="sm"
                     onClick={() => changeTableStatus(table.id, "reserved")}
-                    className={`border-[#B4BEC9]/50 hover:bg-[#B4BEC9]/10 ${
-                      table.status === "reserved" ? "bg-[#B4BEC9]/10 border-[#B4BEC9]" : ""
-                    }`}
+                    className={`border-[#B4BEC9]/50 hover:bg-[#B4BEC9]/10 ${table.status === "reserved" ? "bg-[#B4BEC9]/10 border-[#B4BEC9]" : ""
+                      }`}
                   >
                     <Clock className="h-3 w-3 mr-1" />
                     Reservar
@@ -388,16 +404,17 @@ export function RestaurantTables() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-4 h-[calc(95vh-200px)] overflow-hidden">
                 {/* Menú de comida */}
-                <div className="space-y-3">
+                <div className="flex flex-col h-full overflow-hidden">
                   <h3 className="font-semibold text-[#002333] flex items-center gap-2">
                     <UtensilsCrossed className="h-4 w-4 text-[#159A9C]" />
                     Menú Disponible
                   </h3>
-                  <ScrollArea className="h-[400px] pr-4">
+                  <ScrollArea className="flex-1 overflow-auto pr-4">
                     <div className="space-y-4">
-                      {["Entradas", "Platos Principales", "Bebidas", "Postres"].map((category) => (
+                      {/* Obtener categorías únicas dinámicamente */}
+                      {Array.from(new Set(menuItems.map(item => item.category))).map((category) => (
                         <div key={category}>
                           <h4 className="text-sm font-medium text-[#002333]/70 mb-2">{category}</h4>
                           <div className="space-y-2">
@@ -415,7 +432,7 @@ export function RestaurantTables() {
                                   <Button
                                     size="sm"
                                     onClick={() => addItemToOrder(table.id, item)}
-                                    className="bg-[#159A9C] hover:bg-[#159A9C]/90 text-white"
+                                    className="bg-[#159A9C] hover:bg-[#159A9C]/90 text-white shadow-sm"
                                   >
                                     <Plus className="h-4 w-4" />
                                   </Button>
@@ -429,20 +446,20 @@ export function RestaurantTables() {
                 </div>
 
                 {/* Orden actual */}
-                <div className="space-y-3">
+                <div className="flex flex-col h-full overflow-hidden">
                   <h3 className="font-semibold text-[#002333]">Orden Actual</h3>
                   {!table.currentOrder || table.currentOrder.items.length === 0 ? (
-                    <div className="h-[400px] flex items-center justify-center border-2 border-dashed border-[#B4BEC9]/30 rounded-lg">
+                    <div className="flex-1 flex items-center justify-center border-2 border-dashed border-[#B4BEC9]/30 rounded-lg">
                       <p className="text-[#002333]/50 text-sm">No hay items en la orden</p>
                     </div>
                   ) : (
                     <>
-                      <ScrollArea className="h-[320px] pr-4">
+                      <ScrollArea className="flex-1 overflow-auto pr-2">
                         <div className="space-y-2">
                           {table.currentOrder.items.map((item) => (
                             <div
                               key={item.id}
-                              className="flex items-center justify-between p-3 bg-[#DEEFE7]/20 border border-[#B4BEC9]/30 rounded-lg"
+                              className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-[#DEEFE7]/20 border border-[#B4BEC9]/30 rounded-lg"
                             >
                               <div className="flex-1">
                                 <p className="text-sm font-medium text-[#002333]">{item.name}</p>
@@ -482,37 +499,30 @@ export function RestaurantTables() {
                         </div>
                       </ScrollArea>
 
-                      <Separator className="bg-[#B4BEC9]/30" />
-
-                      <div className="space-y-2 p-3 bg-[#DEEFE7]/30 rounded-lg">
-                        <div className="flex justify-between text-sm">
-                          <span className="text-[#002333]/70">Subtotal:</span>
-                          <span className="font-medium text-[#002333]">
-                            ${calculateTotal(table.currentOrder.items).toFixed(2)}
-                          </span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-[#002333]/70">Items:</span>
-                          <span className="font-medium text-[#002333]">
-                            {table.currentOrder.items.reduce((sum, item) => sum + item.quantity, 0)}
-                          </span>
-                        </div>
-                        <Separator className="bg-[#B4BEC9]/30" />
-                        <div className="flex justify-between">
-                          <span className="font-semibold text-[#002333]">Total:</span>
-                          <span className="font-bold text-[#159A9C] text-lg">
-                            ${calculateTotal(table.currentOrder.items).toFixed(2)}
-                          </span>
+                      {/* Footer compacto con total y botón */}
+                      <div className="space-y-2 pt-2 border-t border-[#B4BEC9]/30">
+                        <div className="flex items-center justify-between p-2 bg-[#DEEFE7]/30 rounded-lg">
+                          <div className="flex items-center gap-4">
+                            <div className="text-xs text-[#002333]/70">
+                              Items: <span className="font-medium text-[#002333]">{table.currentOrder.items.reduce((sum, item) => sum + item.quantity, 0)}</span>
+                            </div>
+                            <div className="text-sm">
+                              <span className="text-[#002333]/70">Total: </span>
+                              <span className="font-bold text-[#159A9C] text-lg">
+                                ${calculateTotal(table.currentOrder.items).toFixed(2)}
+                              </span>
+                            </div>
+                          </div>
+                          <Button
+                            size="sm"
+                            className="bg-[#159A9C] hover:bg-[#159A9C]/90 text-white shadow-sm"
+                            onClick={() => closeTable(table.id)}
+                          >
+                            <CheckCircle2 className="h-4 w-4 mr-1" />
+                            Cerrar
+                          </Button>
                         </div>
                       </div>
-
-                      <Button
-                        className="w-full bg-[#159A9C] hover:bg-[#159A9C]/90 text-white"
-                        onClick={() => closeTable(table.id)}
-                      >
-                        <CheckCircle2 className="h-4 w-4 mr-2" />
-                        Cerrar Cuenta
-                      </Button>
                     </>
                   )}
                 </div>

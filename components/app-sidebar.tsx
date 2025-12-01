@@ -1,17 +1,21 @@
 "use client";
 import {
   LayoutDashboard,
-  Package,
   ShoppingCart,
   ShoppingBag,
+  ClipboardList,
   Users,
   FileText,
   BarChart3,
   Settings,
-  UtensilsCrossed,
   CreditCard,
+  UtensilsCrossed,
+  LogOut,
+  ArrowLeftRight,
 } from "lucide-react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useBusinessContext } from "@/lib/business-context";
+import { useAuth } from "@/contexts/AuthContext";
 
 import {
   Sidebar,
@@ -25,77 +29,111 @@ import {
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-
-const navItems = [
-  {
-    title: "Dashboard",
-    url: "/dashboard",
-    icon: LayoutDashboard,
-  },
-  {
-    title: "Caja",
-    url: "/dashboard/caja",
-    icon: CreditCard,
-  },
-  {
-    title: "Restaurant",
-    url: "/dashboard/restaurant",
-    icon: UtensilsCrossed,
-  },
-  {
-    title: "Products",
-    url: "/dashboard/products",
-    icon: Package,
-  },
-  {
-    title: "Sales",
-    url: "/dashboard/sales",
-    icon: ShoppingCart,
-  },
-  {
-    title: "Purchases",
-    url: "/dashboard/purchases",
-    icon: ShoppingBag,
-  },
-  {
-    title: "Clients",
-    url: "/dashboard/clients",
-    icon: Users,
-  },
-  {
-    title: "Invoices",
-    url: "/dashboard/invoices",
-    icon: FileText,
-  },
-  {
-    title: "Reports",
-    url: "/dashboard/reports",
-    icon: BarChart3,
-  },
-];
+import { Button } from "@/components/ui/button";
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { selectedBusiness, clearBusiness } = useBusinessContext();
+  const { user, logout } = useAuth();
+
+  console.log('Sidebar Debug:', {
+    role: user?.role,
+    businessType: selectedBusiness?.type,
+    hasCaja: selectedBusiness?.features.hasCaja
+  });
+
+  // Define todas las opciones de navegación con sus condiciones de visibilidad
+  const navItems = [
+    {
+      title: "Dashboard",
+      url: "/dashboard",
+      icon: LayoutDashboard,
+      visible: user?.role !== 'tenant_user', // Ocultar Dashboard para empleados
+    },
+    {
+      title: "Caja",
+      url: "/dashboard/caja",
+      icon: CreditCard,
+      visible: selectedBusiness?.features.hasCaja,
+    },
+    {
+      title: "Tienda Online",
+      url: "/dashboard/store-preview",
+      icon: ShoppingBag,
+      visible: selectedBusiness?.features.hasOnlineStore,
+    },
+    {
+      title: "Mesas de Restaurante",
+      url: "/dashboard/restaurant",
+      icon: UtensilsCrossed,
+      visible: selectedBusiness?.features.hasRestaurantTables,
+    },
+    {
+      title: "Inventario",
+      url: "/dashboard/inventario",
+      icon: ClipboardList,
+      visible: selectedBusiness?.features.hasInventory,
+    },
+    // HIDDEN SECTIONS - Uncomment when needed
+    // {
+    //   title: "Sales",
+    //   url: "/dashboard/sales",
+    //   icon: ShoppingCart,
+    //   visible: true,
+    // },
+    // {
+    //   title: "Purchases",
+    //   url: "/dashboard/purchases",
+    //   icon: ShoppingBag,
+    //   visible: true,
+    // },
+    // {
+    //   title: "Clients",
+    //   url: "/dashboard/clients",
+    //   icon: Users,
+    //   visible: true,
+    // },
+    // {
+    //   title: "Invoices",
+    //   url: "/dashboard/invoices",
+    //   icon: FileText,
+    //   visible: true,
+    // },
+    // {
+    //   title: "Reports",
+    //   url: "/dashboard/reports",
+    //   icon: BarChart3,
+    //   visible: true,
+    // },
+  ].filter((item) => item.visible);
+
+  const handleChangeBusiness = () => {
+    clearBusiness();
+    router.push("/");
+  };
 
   return (
     <Sidebar className="bg-white/40 backdrop-blur-md border-r border-[#B4BEC9]/20">
       <SidebarHeader className="border-b border-[#B4BEC9]/10 px-6 py-4 bg-white/30">
         <div className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#159A9C]/90 text-white shadow-sm">
-            <Package className="h-4 w-4" />
+            <ShoppingBag className="h-4 w-4" />
           </div>
-          <div className="flex flex-col">
+          <div className="flex flex-col flex-1">
             <span className="text-sm font-semibold text-[#002333]">
-              InventoryPro
+              {selectedBusiness?.name || "InventoryPro"}
             </span>
-            <span className="text-xs text-[#002333]/60">Management System</span>
+            <span className="text-xs text-[#002333]/60">
+              {selectedBusiness ? (selectedBusiness.id.charAt(0).toUpperCase() + selectedBusiness.id.slice(1)) : "Sistema Multi-Tenant"}
+            </span>
           </div>
         </div>
       </SidebarHeader>
       <SidebarContent className="bg-transparent">
         <SidebarGroup>
           <SidebarGroupLabel className="text-[#002333]/70 text-xs font-medium px-3">
-            Navigation
+            Navegación
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -117,20 +155,27 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="border-t border-[#B4BEC9]/10 p-4 bg-white/30">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              asChild
-              className="hover:bg-[#DEEFE7]/50 text-[#002333]/80 transition-all duration-200"
-            >
-              <a href="/dashboard/settings">
-                <Settings className="h-4 w-4" />
-                <span>Settings</span>
-              </a>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+      <SidebarFooter className="border-t border-[#B4BEC9]/10 p-4 bg-white/30 flex flex-col gap-2">
+        {user?.role === 'super_admin' && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleChangeBusiness}
+            className="w-full justify-start border-[#B4BEC9]/30 hover:bg-[#DEEFE7]/50 text-[#002333]/80 transition-all duration-200"
+          >
+            <ArrowLeftRight className="h-4 w-4 mr-2" />
+            Cambiar Negocio
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={logout}
+          className="w-full justify-start hover:bg-red-50 text-red-600/80 hover:text-red-700 transition-all duration-200"
+        >
+          <LogOut className="h-4 w-4 mr-2" />
+          Cerrar Sesión
+        </Button>
       </SidebarFooter>
     </Sidebar>
   );

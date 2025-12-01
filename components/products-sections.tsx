@@ -22,6 +22,8 @@ import { draggable, dropTargetForElements } from "@atlaskit/pragmatic-drag-and-d
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
+import { useBusinessContext } from "@/lib/business-context"
+import { api } from "@/lib/api"
 
 interface Product {
   id: string
@@ -121,9 +123,10 @@ const inventoryProducts: Product[] = [
 ]
 
 export function ProductsSections() {
+  const { selectedBusiness } = useBusinessContext()
   const [searchQuery, setSearchQuery] = useState("")
   const [inventorySearch, setInventorySearch] = useState("")
-  const [products, setProducts] = useState<Product[]>(inventoryProducts)
+  const [products, setProducts] = useState<Product[]>([])
   const [carts, setCarts] = useState<ShoppingCart[]>([
     {
       id: "1",
@@ -133,6 +136,40 @@ export function ProductsSections() {
     },
   ])
   const [activeCartId, setActiveCartId] = useState("1")
+
+  // Cargar productos desde la API usando el tenant_id del negocio seleccionado
+  useEffect(() => {
+    const fetchProducts = async () => {
+      if (!selectedBusiness) return
+
+      try {
+        // Obtener productos usando el tenant_id del negocio seleccionado
+        const results = await api.get('/catalogo/search?q=', selectedBusiness.tenantId)
+
+        // Mapear productos con sus variantes
+        const mappedProducts: Product[] = results.flatMap((p: any) => {
+          if (!p.variantes || p.variantes.length === 0) {
+            return []
+          }
+          return p.variantes.map((v: any) => ({
+            id: v.id,
+            name: `${p.nombre} - ${v.nombreVariante}`,
+            sku: v.id.toString(),
+            category: "General",
+            price: parseFloat(v.precio),
+            stock: v.trackStock ? 100 : 999,
+            status: "En Stock"
+          }))
+        })
+
+        setProducts(mappedProducts)
+      } catch (error) {
+        console.error("Error al cargar productos:", error)
+        toast.error("Error al cargar productos del inventario")
+      }
+    }
+    fetchProducts()
+  }, [selectedBusiness])
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -303,9 +340,8 @@ export function ProductsSections() {
     return (
       <TableRow
         ref={rowRef}
-        className={`hover:bg-[#DEEFE7]/20 touch-none select-none transition-all ${
-          isDragging ? "opacity-50 scale-95" : "opacity-100"
-        }`}
+        className={`hover:bg-[#DEEFE7]/20 touch-none select-none transition-all ${isDragging ? "opacity-50 scale-95" : "opacity-100"
+          }`}
         style={{ cursor: isDragging ? "grabbing" : "grab" }}
       >
         <TableCell className="font-medium text-[#002333]">
@@ -424,9 +460,8 @@ export function ProductsSections() {
     return (
       <Card
         ref={cardRef}
-        className={`border-[#B4BEC9]/30 shadow-sm transition-all duration-200 ${
-          isOver ? "border-[#159A9C] border-2 bg-[#DEEFE7]/30 scale-[1.02]" : ""
-        }`}
+        className={`border-[#B4BEC9]/30 shadow-sm transition-all duration-200 ${isOver ? "border-[#159A9C] border-2 bg-[#DEEFE7]/30 scale-[1.02]" : ""
+          }`}
       >
         <CardHeader className="bg-[#DEEFE7]/20">
           <CardTitle className="text-[#002333] flex items-center gap-2">
